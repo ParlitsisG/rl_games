@@ -11,7 +11,7 @@ import numpy as np
 def rescale_actions(low, high, action):
     d = (high - low) / 2.0
     m = (high + low) / 2.0
-    scaled_action = action * d + m
+    scaled_action =  action * d + m
     return scaled_action
 
 
@@ -20,7 +20,7 @@ class PpoPlayerContinuous(BasePlayer):
     def __init__(self, params):
         BasePlayer.__init__(self, params)
         self.network = self.config['network']
-        self.actions_num = self.action_space.shape[0]
+        self.actions_num = self.action_space.shape[0] 
         self.actions_low = torch.from_numpy(self.action_space.low.copy()).float().to(self.device)
         self.actions_high = torch.from_numpy(self.action_space.high.copy()).float().to(self.device)
         self.mask = [False]
@@ -30,10 +30,10 @@ class PpoPlayerContinuous(BasePlayer):
 
         obs_shape = self.obs_shape
         config = {
-            'actions_num': self.actions_num,
-            'input_shape': obs_shape,
-            'num_seqs': self.num_agents,
-            'value_size': self.env_info.get('value_size', 1),
+            'actions_num' : self.actions_num,
+            'input_shape' : obs_shape,
+            'num_seqs' : self.num_agents,
+            'value_size': self.env_info.get('value_size',1),
             'normalize_value': self.normalize_value,
             'normalize_input': self.normalize_input,
         } 
@@ -48,9 +48,9 @@ class PpoPlayerContinuous(BasePlayer):
         obs = self._preproc_obs(obs)
         input_dict = {
             'is_train': False,
-            'prev_actions': None,
-            'obs': obs,
-            'rnn_states': self.states
+            'prev_actions': None, 
+            'obs' : obs,
+            'rnn_states' : self.states
         }
         with torch.no_grad():
             res_dict = self.model(input_dict)
@@ -95,17 +95,15 @@ class PpoPlayerDiscrete(BasePlayer):
         if type(self.action_space) is gym.spaces.Tuple:
             self.actions_num = [action.n for action in self.action_space]
             self.is_multi_discrete = True
-
         self.mask = [False]
         self.normalize_input = self.config['normalize_input']
         self.normalize_value = self.config.get('normalize_value', False)
-
         obs_shape = self.obs_shape
         config = {
-            'actions_num': self.actions_num,
-            'input_shape': obs_shape,
-            'num_seqs': self.num_agents,
-            'value_size': self.env_info.get('value_size', 1),
+            'actions_num' : self.actions_num,
+            'input_shape' : obs_shape,
+            'num_seqs' : self.num_agents,
+            'value_size': self.env_info.get('value_size',1),
             'normalize_value': self.normalize_value,
             'normalize_input': self.normalize_input,
         }
@@ -115,17 +113,17 @@ class PpoPlayerDiscrete(BasePlayer):
         self.model.eval()
         self.is_rnn = self.model.is_rnn()
 
-    def get_masked_action(self, obs, action_masks, is_deterministic=True):
-        if not self.has_batch_dimension:
+    def get_masked_action(self, obs, action_masks, is_deterministic = True):
+        if self.has_batch_dimension == False:
             obs = unsqueeze_obs(obs)
         obs = self._preproc_obs(obs)
         action_masks = torch.Tensor(action_masks).to(self.device).bool()
         input_dict = {
             'is_train': False,
-            'prev_actions': None,
-            'obs': obs,
-            'action_masks': action_masks,
-            'rnn_states': self.states
+            'prev_actions': None, 
+            'obs' : obs,
+            'action_masks' : action_masks,
+            'rnn_states' : self.states
         }
         self.model.eval()
 
@@ -143,20 +141,20 @@ class PpoPlayerDiscrete(BasePlayer):
         else:
             if is_deterministic:
                 return torch.argmax(logits.detach(), axis=-1).squeeze()
-            else:
+            else:    
                 return action.squeeze().detach()
 
-    def get_action(self, obs, is_deterministic=False):
-        if not self.has_batch_dimension:
+    def get_action(self, obs, is_deterministic = False):
+        if self.has_batch_dimension == False:
             obs = unsqueeze_obs(obs)
         obs = self._preproc_obs(obs)
 
         self.model.eval()
         input_dict = {
             'is_train': False,
-            'prev_actions': None,
-            'obs': obs,
-            'rnn_states': self.states
+            'prev_actions': None, 
+            'obs' : obs,
+            'rnn_states' : self.states
         }
         with torch.no_grad():
             res_dict = self.model(input_dict)
@@ -166,13 +164,13 @@ class PpoPlayerDiscrete(BasePlayer):
         if self.is_multi_discrete:
             if is_deterministic:
                 action = [torch.argmax(logit.detach(), axis=1).squeeze() for logit in logits]
-                return torch.stack(action, dim=-1)
-            else:
+                return torch.stack(action,dim=-1)
+            else:    
                 return action.squeeze().detach()
         else:
             if is_deterministic:
                 return torch.argmax(logits.detach(), axis=-1).squeeze()
-            else:
+            else:    
                 return action.squeeze().detach()
 
     def restore(self, fn):
@@ -190,10 +188,6 @@ class PpoPlayerDiscrete(BasePlayer):
 
 
 class SACPlayer(BasePlayer):
-    """
-    Player implementation for Soft Actor-Critic (SAC) algorithm.
-    Handles agent inference for both training and evaluation.
-    """
 
     def __init__(self, params):
         BasePlayer.__init__(self, params)
@@ -205,12 +199,12 @@ class SACPlayer(BasePlayer):
         ]
 
         obs_shape = self.obs_shape
-        self.normalize_input = self.config.get('normalize_input', False)
+        self.normalize_input = False
         config = {
             'obs_dim': self.env_info["observation_space"].shape[0],
             'action_dim': self.env_info["action_space"].shape[0],
-            'actions_num': self.actions_num,
-            'input_shape': obs_shape,
+            'actions_num' : self.actions_num,
+            'input_shape' : obs_shape,
             'value_size': self.env_info.get('value_size', 1),
             'normalize_value': False,
             'normalize_input': self.normalize_input,
@@ -235,9 +229,8 @@ class SACPlayer(BasePlayer):
     def get_action(self, obs, is_deterministic=False):
         if self.has_batch_dimension == False:
             obs = unsqueeze_obs(obs)
-        obs = self.model.norm_obs(obs)
         dist = self.model.actor(obs)
-        actions = dist.sample() if not is_deterministic else dist.mean
+        actions = dist.sample() if is_deterministic else dist.mean
         actions = actions.clamp(*self.action_range).to(self.device)
         if self.has_batch_dimension == False:
             actions = torch.squeeze(actions.detach())

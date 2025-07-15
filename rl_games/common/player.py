@@ -25,7 +25,6 @@ class BasePlayer(object):
         self.env_info = self.config.get('env_info')
         self.clip_actions = config.get('clip_actions', True)
         self.seed = self.env_config.pop('seed', None)
-        self.balance_env_rewards = self.player_config.get('balance_env_rewards', False)
 
         if self.env_info is None:
             use_vecenv = self.player_config.get('use_vecenv', False)
@@ -63,8 +62,7 @@ class BasePlayer(object):
             'central_value_config') is not None
         self.device_name = self.config.get('device_name', 'cuda')
         self.render_env = self.player_config.get('render', False)
-        # 1000000000 is a large number that should be enough for any practical purpose
-        self.games_num = self.player_config.get('games_num', 1000000000)
+        self.games_num = self.player_config.get('games_num', 2000)
 
         if 'deterministic' in self.player_config:
             self.is_deterministic = self.player_config['deterministic']
@@ -127,7 +125,7 @@ class BasePlayer(object):
                 load_error = False
                 try:
                     torch.load(self.checkpoint_to_load)
-                except (OSError, IOError, torch.TorchError) as e:
+                except Exception as e:
                     print(f"Evaluation: checkpoint file is likely corrupted {self.checkpoint_to_load}: {e}")
                     load_error = True
 
@@ -273,13 +271,14 @@ class BasePlayer(object):
             )[2]), dtype=torch.float32).to(self.device) for s in rnn_states]
 
     def run(self):
+        n_games = self.games_num
         render = self.render_env
         n_game_life = self.n_game_life
-        n_games = self.games_num * n_game_life
         is_deterministic = self.is_deterministic
         sum_rewards = 0
         sum_steps = 0
         sum_game_res = 0
+        n_games = n_games * n_game_life
         games_played = 0
         has_masks = False
         has_masks_func = getattr(self.env, "has_action_mask", None) is not None
@@ -312,13 +311,6 @@ class BasePlayer(object):
             cr = torch.zeros(batch_size, dtype=torch.float32)
             steps = torch.zeros(batch_size, dtype=torch.float32)
 
-            # Initialize per-environment accumulators if balance_env_rewards is enabled
-            if self.balance_env_rewards:
-                per_env_rewards = torch.zeros(batch_size, dtype=torch.float32)
-                per_env_steps = torch.zeros(batch_size, dtype=torch.float32)
-                per_env_game_res = torch.zeros(batch_size, dtype=torch.float32)
-                per_env_games_played = torch.zeros(batch_size, dtype=torch.float32)
-
             print_game_res = False
 
             for n in range(self.max_steps):
@@ -344,11 +336,21 @@ class BasePlayer(object):
                 done_indices = all_done_indices[::self.num_agents]
                 done_count = len(done_indices)
                 games_played += done_count
+
                 if done_count > 0:
                     if self.is_rnn:
                         for s in self.states:
                             s[:, all_done_indices, :] = s[:,
-                                                        all_done_indices, :] * 0.0
+                                                          all_done_indices, :] * 0.0
+
+                    cur_rewards = cr[done_indices].sum().item()
+                    cur_steps = steps[done_indices].sum().item()
+
+                    cr = cr * (1.0 - done.float())
+                    steps = steps * (1.0 - done.float())
+                    sum_rewards += cur_rewards
+                    sum_steps += cur_steps
+
                     game_res = 0.0
                     if isinstance(info, dict):
                         if 'battle_won' in info:
@@ -358,73 +360,25 @@ class BasePlayer(object):
                             print_game_res = True
                             game_res = info.get('scores', 0.5)
 
-                    if self.balance_env_rewards:
-                        # Update per-environment accumulators
-                        per_env_rewards[done_indices] += cr[done_indices]
-                        per_env_steps[done_indices] += steps[done_indices]
-                        per_env_games_played[done_indices] += 1
+                    if self.print_stats:
+                        cur_rewards_done = cur_rewards/done_count
+                        cur_steps_done = cur_steps/done_count
                         if print_game_res:
-                            per_env_game_res[done_indices] += game_res
+                            print(f'reward: {cur_rewards_done:.2f} steps: {cur_steps_done:.1f} w: {game_res}')
+                        else:
+                            print(f'reward: {cur_rewards_done:.2f} steps: {cur_steps_done:.1f}')
 
-                        # Reset current rewards and steps for done environments
-                        cr[done_indices] = 0
-                        steps[done_indices] = 0
-                    else:
-                        # Original accumulation
-                        cur_rewards = cr[done_indices].sum().item()
-                        cur_steps = steps[done_indices].sum().item()
-
-                        cr = cr * (1.0 - done.float())
-                        steps = steps * (1.0 - done.float())
-                        sum_rewards += cur_rewards
-                        sum_steps += cur_steps
-                        sum_game_res += game_res
-
-                        if self.print_stats:
-                            cur_rewards_done = cur_rewards / done_count
-                            cur_steps_done = cur_steps / done_count
-                            if print_game_res:
-                                print(
-                                    f'reward: {cur_rewards_done:.2f} steps: {cur_steps_done:.1f} w: {game_res}')
-                            else:
-                                print(
-                                    f'reward: {cur_rewards_done:.2f} steps: {cur_steps_done:.1f}')
-
-                    if batch_size // self.num_agents == 1 or games_played >= n_games:
+                    sum_game_res += game_res
+                    if batch_size//self.num_agents == 1 or games_played >= n_games:
                         break
 
-        if self.balance_env_rewards:
-            # Calculate per-environment average rewards
-            valid_envs = per_env_games_played > 0
-            per_env_avg_rewards = torch.zeros(batch_size, dtype=torch.float32)
-            per_env_avg_steps = torch.zeros(batch_size, dtype=torch.float32)
-            per_env_avg_game_res = torch.zeros(batch_size, dtype=torch.float32)
-
-            per_env_avg_rewards[valid_envs] = (
-                per_env_rewards[valid_envs] / per_env_games_played[valid_envs])
-            per_env_avg_steps[valid_envs] = (
-                per_env_steps[valid_envs] / per_env_games_played[valid_envs])
-
-            overall_avg_reward = per_env_avg_rewards[valid_envs].mean().item()
-            overall_avg_steps = per_env_avg_steps[valid_envs].mean().item()
-
-            if print_game_res:
-                per_env_avg_game_res[valid_envs] = (
-                    per_env_game_res[valid_envs] / per_env_games_played[valid_envs])
-                overall_winrate = per_env_avg_game_res[valid_envs].mean().item()
-                print('av reward:', overall_avg_reward * n_game_life, 'av steps:', overall_avg_steps *
-                    n_game_life, 'winrate:', overall_winrate * n_game_life)
-            else:
-                print('av reward:', overall_avg_reward * n_game_life,
-                    'av steps:', overall_avg_steps * n_game_life)
+        print(sum_rewards)
+        if print_game_res:
+            print('av reward:', sum_rewards / games_played * n_game_life, 'av steps:', sum_steps /
+                  games_played * n_game_life, 'winrate:', sum_game_res / games_played * n_game_life)
         else:
-            print(sum_rewards)
-            if print_game_res:
-                print('av reward:', sum_rewards / games_played * n_game_life, 'av steps:', sum_steps /
-                    games_played * n_game_life, 'winrate:', sum_game_res / games_played * n_game_life)
-            else:
-                print('av reward:', sum_rewards / games_played * n_game_life,
-                    'av steps:', sum_steps / games_played * n_game_life)
+            print('av reward:', sum_rewards / games_played * n_game_life,
+                  'av steps:', sum_steps / games_played * n_game_life)
 
     def get_batch_size(self, obses, batch_size):
         obs_shape = self.obs_shape

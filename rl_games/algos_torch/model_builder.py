@@ -18,6 +18,8 @@ class NetworkBuilder:
         self.network_factory = object_factory.ObjectFactory()
         self.network_factory.set_builders(NETWORK_REGISTRY)
         self.network_factory.register_builder('actor_critic', lambda **kwargs: network_builder.A2CBuilder())
+        self.network_factory.register_builder('world_model_A2C', lambda **kwargs: network_builder.WorldA2CBuilder())
+        self.network_factory.register_builder('dict_A2C', lambda **kwargs: network_builder.DictA2CBuilder())
         self.network_factory.register_builder('resnet_actor_critic',
                                               lambda **kwargs: network_builder.A2CResnetBuilder())
         self.network_factory.register_builder('rnd_curiosity', lambda **kwargs: network_builder.RNDCuriosityBuilder())
@@ -46,8 +48,6 @@ class ModelBuilder:
                                             lambda network, **kwargs: models.ModelSACContinuous(network))
         self.model_factory.register_builder('central_value',
                                             lambda network, **kwargs: models.ModelCentralValue(network))
-        self.model_factory.register_builder('continuous_a2c_tanh',
-                                            lambda network, **kwargs: models.ModelA2CContinuousTanh(network))
         self.network_builder = NetworkBuilder()
 
     def get_network_builder(self):
